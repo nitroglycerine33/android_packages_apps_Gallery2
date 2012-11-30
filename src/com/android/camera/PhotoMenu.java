@@ -163,6 +163,26 @@ public class PhotoMenu extends PieController
             });
             more.addItem(item);
         }
+        // Power shutter
+        if (group.findPreference(CameraSettings.KEY_POWER_SHUTTER) != null) {
+            item = makeItem(R.drawable.ic_power_shutter);
+            final ListPreference shutterPref = group.findPreference(CameraSettings.KEY_POWER_SHUTTER);
+            item.setLabel(res.getString(R.string.pref_camera_power_shutter_title).toUpperCase(locale));
+            item.setOnClickListener(new OnClickListener() {
+                @Override
+                public void onClick(PieItem item) {
+                    LayoutInflater inflater =  mActivity.getLayoutInflater();
+                    ListPrefSettingPopup popup = (ListPrefSettingPopup) inflater.inflate(
+                            R.layout.list_pref_setting_popup, null, false);
+                    popup.initialize(shutterPref);
+                    popup.setSettingChangedListener(PhotoMenu.this);
+                    mUI.dismissPopup();
+                    mPopup = popup;
+                    mUI.showPopup(mPopup);
+                }
+            });
+            more.addItem(item);
+        }
         // white balance
         if (group.findPreference(CameraSettings.KEY_WHITE_BALANCE) != null) {
             item = makeItem(CameraSettings.KEY_WHITE_BALANCE);
