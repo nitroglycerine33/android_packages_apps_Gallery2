@@ -37,6 +37,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 import android.view.SurfaceHolder;
+import android.os.ConditionVariable;
 
 import com.android.gallery3d.common.ApiHelper;
 
@@ -45,6 +46,9 @@ import java.io.IOException;
 public class CameraManager {
     private static final String TAG = "CameraManager";
     private static CameraManager sCameraManager = new CameraManager();
+
+    // Thread progress signals
+    private ConditionVariable mSig = new ConditionVariable();
 
     private Parameters mParameters;
     private boolean mParametersIsDirty;
@@ -141,6 +145,9 @@ public class CameraManager {
          */
         @Override
         public void handleMessage(final Message msg) {
+            if (mCamera == null) {
+                return;
+            }
             try {
                 switch (msg.what) {
                     case RELEASE:
@@ -233,9 +240,9 @@ public class CameraManager {
 
                     case SET_PARAMETERS:
                         mParametersIsDirty = true;
-                        mParamsToSet.unflatten((String) msg.obj);
-                        mCamera.setParameters(mParamsToSet);
-                        return;
+                        mCamera.setParameters((Parameters) msg.obj);
+                        mSig.open();
+                        break;
 
                     case GET_PARAMETERS:
                         if (mParametersIsDirty) {
@@ -445,8 +452,10 @@ public class CameraManager {
                 Log.v(TAG, "null parameters in setParameters()");
                 return;
             }
-            mCameraHandler.obtainMessage(SET_PARAMETERS, params.flatten())
+            mSig.close();
+            mCameraHandler.obtainMessage(SET_PARAMETERS, params)
                     .sendToTarget();
+            mSig.block();
         }
 
         public Parameters getParameters() {

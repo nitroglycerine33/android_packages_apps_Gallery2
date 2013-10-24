@@ -69,11 +69,9 @@ public class CameraSettings {
     public static final String KEY_VIDEO_FIRST_USE_HINT_SHOWN = "pref_video_first_use_hint_shown_key";
     public static final String KEY_PHOTOSPHERE_PICTURESIZE = "pref_photosphere_picturesize_key";
     public static final String KEY_STORAGE = "pref_camera_storage_key";
-    public static final String KEY_POWER_SHUTTER = "pref_power_shutter";
+    public static final String KEY_VIDEO_HDR = "pref_camera_video_hdr_key";
 
     public static final String EXPOSURE_DEFAULT_VALUE = "0";
-    public static final String VALUE_ON = "on";
-    public static final String VALUE_OFF = "off";
 
     public static final int CURRENT_VERSION = 5;
     public static final int CURRENT_LOCAL_VERSION = 2;
@@ -182,6 +180,7 @@ public class CameraSettings {
         ListPreference videoEffect = group.findPreference(KEY_VIDEO_EFFECT);
         ListPreference cameraHdr = group.findPreference(KEY_CAMERA_HDR);
         ListPreference storage = group.findPreference(KEY_STORAGE);
+        ListPreference videoHdr = group.findPreference(KEY_VIDEO_HDR);
 
         // Since the screen could be loaded from different resources, we need
         // to check if the preference is available here
@@ -240,6 +239,12 @@ public class CameraSettings {
         if (cameraHdr != null && (!ApiHelper.HAS_CAMERA_HDR
                     || !Util.isCameraHdrSupported(mParameters))) {
             removePreference(group, cameraHdr.getKey());
+        }
+        if (videoHdr != null) {
+            if (!mContext.getResources().getBoolean(R.bool.enableVideoHDR)) {
+                removePreference(group, videoHdr.getKey());
+            }
+            filterUnsupportedOptions(group, videoHdr, mParameters.getSupportedVideoHDRModes());
         }
         if (storage != null) {
             buildStorage(group, storage);
@@ -448,7 +453,7 @@ public class CameraSettings {
         if (version == 2) {
             editor.putString(KEY_RECORD_LOCATION,
                     pref.getBoolean(KEY_RECORD_LOCATION, false)
-                    ? CameraSettings.VALUE_ON
+                    ? RecordLocationPreference.VALUE_ON
                     : RecordLocationPreference.VALUE_NONE);
             version = 3;
         }
@@ -521,6 +526,12 @@ public class CameraSettings {
             Log.e(TAG, "Invalid exposure: " + exposure);
         }
         return 0;
+    }
+
+    public static void resetSceneMode(Parameters params) {
+        if (params.getSupportedSceneModes() != null) {
+            params.setSceneMode(Parameters.SCENE_MODE_AUTO);
+        }
     }
 
     public static int readEffectType(SharedPreferences pref) {
@@ -633,6 +644,13 @@ public class CameraSettings {
         if (CamcorderProfile.hasProfile(mCameraId, CamcorderProfile.QUALITY_480P)) {
             supported.add(Integer.toString(CamcorderProfile.QUALITY_480P));
         }
+        if (CamcorderProfile.hasProfile(mCameraId, CamcorderProfile.QUALITY_WVGA)) {
+            for (Size size : mParameters.getSupportedHfrSizes()) {
+                if (size.width == 800 && size.height == 480) {
+                    supported.add(Integer.toString(CamcorderProfile.QUALITY_WVGA));
+                }
+            }
+        }
     }
 
     /**
@@ -646,7 +664,8 @@ public class CameraSettings {
             params.set("video-size", profile.videoFrameWidth + "x" + profile.videoFrameHeight);
         }
     }
-     /**
+
+    /**
      * Enable video mode for certain cameras.
      *
      * @param params
@@ -658,6 +677,12 @@ public class CameraSettings {
         }
         if (Util.useHTCCamMode()) {
             params.set("cam-mode", on ? "1" : "0");
+        }
+    }
+
+    public static void setReducePurple(Parameters params, boolean on) {
+        if (params.get("reduce-purple") != null) {
+            params.set("reduce-purple", on ? "on" : "off");
         }
     }
 

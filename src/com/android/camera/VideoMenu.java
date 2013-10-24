@@ -56,6 +56,11 @@ public class VideoMenu extends PieController
         mPopup = null;
         mPopupStatus = POPUP_NONE;
         PieItem item = null;
+        // hdr
+        if (group.findPreference(CameraSettings.KEY_VIDEO_HDR) != null) {
+            item = makeSwitchItem(CameraSettings.KEY_VIDEO_HDR, true);
+            mRenderer.addItem(item);
+        }
         // white balance
         if (group.findPreference(CameraSettings.KEY_WHITE_BALANCE) != null) {
             item = makeItem(CameraSettings.KEY_WHITE_BALANCE);
@@ -67,8 +72,7 @@ public class VideoMenu extends PieController
                 CameraSettings.KEY_VIDEO_TIME_LAPSE_FRAME_INTERVAL,
                 CameraSettings.KEY_VIDEO_QUALITY,
                 CameraSettings.KEY_RECORD_LOCATION,
-                CameraSettings.KEY_STORAGE,
-                CameraSettings.KEY_POWER_SHUTTER
+                CameraSettings.KEY_STORAGE
         };
         item = makeItem(R.drawable.ic_settings_holo_light);
         item.setLabel(mActivity.getResources().getString(R.string.camera_menu_settings_label));
@@ -94,6 +98,13 @@ public class VideoMenu extends PieController
                     [lpref.findIndexOfValue(lpref.getValue())]);
 
             final PieItem fitem = item;
+            item.setOnSuperClickListener(new OnClickListener() {
+
+                @Override
+                public void onClick(PieItem item) {
+                    mListener.onCameraPickerSuperClicked();
+                }
+            });
             item.setOnClickListener(new OnClickListener() {
 
                 @Override
@@ -167,9 +178,9 @@ public class VideoMenu extends PieController
     }
 
     public void popupDismissed(boolean topPopupOnly) {
+        initializePopup();
         // if the 2nd level popup gets dismissed
         if (mPopupStatus == POPUP_SECOND_LEVEL) {
-            initializePopup();
             mPopupStatus = POPUP_FIRST_LEVEL;
             if (topPopupOnly) mUI.showPopup(mPopup);
         }
