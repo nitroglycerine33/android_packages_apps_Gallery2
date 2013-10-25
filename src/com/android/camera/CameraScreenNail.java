@@ -67,7 +67,6 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
     // sure some code are atomic. For example, requestRender and setting
     // mAnimState.
     private Object mLock = new Object();
-    private boolean mWaitFlag = false;
 
     private OnFrameDrawnListener mOneTimeFrameDrawnListener;
     private int mRenderWidth;
@@ -156,11 +155,11 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
         return mEnableAspectRatioClamping ? mRenderHeight : getTextureHeight();
     }
 
-    public int getTextureWidth() {
+    private int getTextureWidth() {
         return super.getWidth();
     }
 
-    public int getTextureHeight() {
+    private int getTextureHeight() {
         return super.getHeight();
     }
 
@@ -235,15 +234,6 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
             mAcquireTexture = true;
         }
         mListener.requestRender();
-    }
-
-    public void cancelAcquire() {
-         synchronized (mLock) {
-            if (mAcquireTexture) {
-                mAcquireTexture = false;
-                mLock.notifyAll();
-            }
-         }
     }
 
     @Override
@@ -430,10 +420,7 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
             // as the origin (0, 0).
             canvas.translate(0, height);
             canvas.scale(1, -1, 1);
-            SurfaceTexture surfaceT = getSurfaceTexture();
-            if (surfaceT != null) {
-                surfaceT.getTransformMatrix(mTextureTransformMatrix);
-            }
+            getSurfaceTexture().getTransformMatrix(mTextureTransformMatrix);
             updateTransformMatrix(mTextureTransformMatrix);
             canvas.drawTexture(mExtTexture, mTextureTransformMatrix, 0, 0, width, height);
             canvas.endRenderTarget();
@@ -492,21 +479,18 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
 
     @Override
     public SurfaceTexture getSurfaceTexture() {
-        SurfaceTexture surfaceTexture = null;
         synchronized (mLock) {
-            surfaceTexture = super.getSurfaceTexture();
+            SurfaceTexture surfaceTexture = super.getSurfaceTexture();
             if (surfaceTexture == null && mAcquireTexture) {
                 try {
-                    if (mWaitFlag) mLock.notifyAll();
-                    mWaitFlag = true;
                     mLock.wait();
                     surfaceTexture = super.getSurfaceTexture();
                 } catch (InterruptedException e) {
                     Log.w(TAG, "unexpected interruption");
                 }
             }
+            return surfaceTexture;
         }
-        return surfaceTexture;
     }
 
     private void allocateTextureIfRequested(GLCanvas canvas) {
@@ -515,7 +499,6 @@ public class CameraScreenNail extends SurfaceTextureScreenNail {
                 super.acquireSurfaceTexture(canvas);
                 mAcquireTexture = false;
                 mLock.notifyAll();
-                mWaitFlag = false;
             }
         }
     }

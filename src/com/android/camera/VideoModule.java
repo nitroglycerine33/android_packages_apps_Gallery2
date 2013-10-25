@@ -72,7 +72,6 @@ import java.util.List;
 
 public class VideoModule implements CameraModule,
     VideoController,
-    FocusOverlayManager.Listener,
     CameraPreference.OnPreferenceChangedListener,
     ShutterButton.OnShutterButtonListener,
     MediaRecorder.OnErrorListener,
@@ -93,7 +92,6 @@ public class VideoModule implements CameraModule,
     private static final int SWITCH_CAMERA_START_ANIMATION = 9;
     private static final int HIDE_SURFACE_VIEW = 10;
     private static final int CAPTURE_ANIMATION_DONE = 11;
-    private static final int START_PREVIEW_DONE = 12;
 
     private static final int SCREEN_DELAY = 2 * 60 * 1000;
 
@@ -113,8 +111,6 @@ public class VideoModule implements CameraModule,
     private boolean mPaused;
     private int mCameraId;
     private Parameters mParameters;
-    private boolean mFocusAreaSupported;
-    private boolean mMeteringAreaSupported;
 
     private Boolean mCameraOpened = false;
 
@@ -145,9 +141,7 @@ public class VideoModule implements CameraModule,
 
     private boolean mSwitchingCamera;
     private boolean mMediaRecorderRecording = false;
-    private boolean mMediaRecorderPausing = false;
     private long mRecordingStartTime;
-    private long mRecordingTotalTime;
     private boolean mRecordingTimeCountsDown = false;
     private long mOnResumeTime;
     // The video file that the hardware camera is about to record into
@@ -183,13 +177,7 @@ public class VideoModule implements CameraModule,
 
     private LocationManager mLocationManager;
 
-    private final AutoFocusCallback mAutoFocusCallback =
-            new AutoFocusCallback();
-
     private int mPendingSwitchCameraId;
-
-    // This handles everything about focus.
-    private FocusOverlayManager mFocusManager;
 
     private final Handler mHandler = new MainHandler();
     private VideoUI mUI;
@@ -203,10 +191,6 @@ public class VideoModule implements CameraModule,
 
     private int mVideoWidth;
     private int mVideoHeight;
-
-    private boolean mEnableHFR = false;
-
-    private StartPreviewThread mStartPreviewThread;
 
     private final MediaSaveService.OnMediaSavedListener mOnVideoSavedListener =
             new MediaSaveService.OnMediaSavedListener() {
@@ -236,17 +220,6 @@ public class VideoModule implements CameraModule,
         @Override
         public void run() {
             openCamera();
-            if (mFocusManager == null) initializeFocusManager();
-        }
-    }
-
-    private class StartPreviewThread extends Thread {
-        @Override
-        public void run() {
-            try {
-                startPreview();
-            }catch (Exception e) {
-            }
         }
     }
 
@@ -259,19 +232,11 @@ public class VideoModule implements CameraModule,
                 }
             }
             mParameters = mActivity.mCameraDevice.getParameters();
-
-            mFocusAreaSupported = Util.isFocusAreaSupported(mParameters);
-            mMeteringAreaSupported = Util.isMeteringAreaSupported(mParameters);
-
         } catch (CameraHardwareException e) {
             mActivity.mOpenCameraFail = true;
         } catch (CameraDisabledException e) {
             mActivity.mCameraDisabled = true;
         }
-    }
-
-    public void onScreenSizeChanged(int width, int height, int previewWidth, int previewHeight) {
-        if (mFocusManager != null) mFocusManager.setPreviewSize(width, height);
     }
 
     // This Handler is used to post message back onto the main thread of the
@@ -337,11 +302,6 @@ public class VideoModule implements CameraModule,
 
                 case CAPTURE_ANIMATION_DONE: {
                     mUI.enablePreviewThumb(false);
-                    break;
-                }
-
-                case START_PREVIEW_DONE: {
-                    mStartPreviewThread = null;
                     break;
                 }
 
@@ -415,6 +375,9 @@ public class VideoModule implements CameraModule,
         mPrefVideoEffectDefault = mActivity.getString(R.string.pref_video_effect_default);
         resetEffect();
 
+        // Power shutter
+        mActivity.initPowerShutter(mPreferences);
+
         /*
          * To reduce startup time, we start the preview in another thread.
          * We make sure the preview is started at the end of onCreate.
@@ -448,16 +411,14 @@ public class VideoModule implements CameraModule,
             // ignore
         }
 
-        CameraScreenNail screenNail = (CameraScreenNail) mActivity.mCameraScreenNail;
-        if (screenNail.getSurfaceTexture() == null) {
-            screenNail.acquireSurfaceTexture();
-        }
-
         readVideoPreferences();
         mUI.setPrefChangedListener(this);
-
-        mStartPreviewThread = new StartPreviewThread();
-        mStartPreviewThread.start();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                startPreview();
+            }
+        }).start();
 
         mQuickCapture = mActivity.getIntent().getBooleanExtra(EXTRA_QUICK_CAPTURE, false);
         mLocationManager = new LocationManager(mActivity, null);
@@ -484,57 +445,10 @@ public class VideoModule implements CameraModule,
         }
     }
 
-    @Override
-    public void autoFocus() {
-        Log.e(TAG, "start autoFocus.");
-        mActivity.mCameraDevice.autoFocus(mAutoFocusCallback);
-    }
-
-    @Override
-    public void cancelAutoFocus() {
-        mActivity.mCameraDevice.cancelAutoFocus();
-    }
-
-    @Override
-    public boolean capture() {
-       return true;
-    }
-
-    @Override
-    public void startFaceDetection() {
-    }
-
-    @Override
-    public void stopFaceDetection() {
-    }
-
-    @Override
-    public void setFocusParameters() {
-        if (mFocusAreaSupported)
-            mParameters.setFocusAreas(mFocusManager.getFocusAreas());
-        if (mMeteringAreaSupported)
-            mParameters.setMeteringAreas(mFocusManager.getMeteringAreas());
-        if (mFocusAreaSupported || mMeteringAreaSupported)
-            mActivity.mCameraDevice.setParameters(mParameters);
-    }
-
     // SingleTapListener
     // Preview area is touched. Take a picture.
     @Override
     public void onSingleTapUp(View view, int x, int y) {
-        if (!mParameters.isVideoSnapshotSupported()) {
-            // Do not trigger touch focus if popup window is opened.
-            if (mUI.removeTopLevelPopup())
-                return;
-
-            // Check if metering area or focus area is supported.
-            if (mFocusAreaSupported || mMeteringAreaSupported) {
-                mFocusManager.onSingleTapUp(x, y);
-            }
-        }
-
-        //If recording pause, ignore livesnapshot
-        if (mMediaRecorderPausing) return;
         if (mMediaRecorderRecording && effectsActive()) {
             new RotateTextToast(mActivity, R.string.disable_video_snapshot_hint,
                     mOrientation).show();
@@ -542,8 +456,7 @@ public class VideoModule implements CameraModule,
         }
 
         MediaSaveService s = mActivity.getMediaSaveService();
-        if (mPaused || mSnapshotInProgress || effectsActive() || s == null || s.isQueueFull()
-            || !Util.isVideoSnapshotSupported(mParameters)) {
+        if (mPaused || mSnapshotInProgress || effectsActive() || s == null || s.isQueueFull()) {
             return;
         }
 
@@ -566,7 +479,6 @@ public class VideoModule implements CameraModule,
         mSnapshotInProgress = true;
         UsageStatistics.onEvent(UsageStatistics.COMPONENT_CAMERA,
                 UsageStatistics.ACTION_CAPTURE_DONE, "VideoSnapshot");
-
     }
 
     @Override
@@ -728,19 +640,6 @@ public class VideoModule implements CameraModule,
         mUI.setShutterPressed(pressed);
     }
 
-    private final class AutoFocusCallback
-            implements android.hardware.Camera.AutoFocusCallback {
-        @Override
-        public void onAutoFocus(
-                boolean focused, android.hardware.Camera camera) {
-            Log.e(TAG, "AutoFocusCallback, mPaused=" + mPaused);
-            if (mPaused) return;
-
-            //setCameraState(IDLE);
-            mFocusManager.onAutoFocus(focused, false);
-        }
-    }
-
     private void readVideoPreferences() {
         // The preference stores values from ListPreference and is thus string type for all values.
         // We need to convert it to int manually.
@@ -750,9 +649,6 @@ public class VideoModule implements CameraModule,
                 mPreferences.getString(CameraSettings.KEY_VIDEO_QUALITY,
                         defaultQuality);
         int quality = Integer.valueOf(videoQuality);
-
-        // Enable HFR mode for WVGA
-        mEnableHFR = quality == CamcorderProfile.QUALITY_WVGA;
 
         // Set video quality.
         Intent intent = mActivity.getIntent();
@@ -853,20 +749,7 @@ public class VideoModule implements CameraModule,
                 ". mDesiredPreviewHeight=" + mDesiredPreviewHeight);
     }
 
-    void setPreviewFrameLayoutCameraOrientation(){
-       CameraInfo info = CameraHolder.instance().getCameraInfo()[mCameraId];
-
-       //if camera mount angle is 0 or 180, we want to resize preview
-       if(info.orientation % 180 == 0){
-           mUI.mPreviewFrameLayout.setRenderer(mUI.mPieRenderer);
-           mUI.mPreviewFrameLayout.cameraOrientationPreviewResize(true);
-       } else{
-           mUI.mPreviewFrameLayout.cameraOrientationPreviewResize(false);
-       }
-    }
-
     private void resizeForPreviewAspectRatio() {
-        setPreviewFrameLayoutCameraOrientation();
         mUI.setAspectRatio(
                 (double) mProfile.videoFrameWidth / mProfile.videoFrameHeight);
     }
@@ -891,12 +774,12 @@ public class VideoModule implements CameraModule,
     public void onResumeAfterSuper() {
         if (mActivity.mOpenCameraFail || mActivity.mCameraDisabled)
             return;
+        mUI.enableShutter(false);
         mZoomValue = 0;
 
         showVideoSnapshotUI(false);
-        mUI.enableShutter(false);
 
-        if (!mPreviewing && mStartPreviewThread == null) {
+        if (!mPreviewing) {
             resetEffect();
             openCamera();
             if (mActivity.mOpenCameraFail) {
@@ -909,14 +792,12 @@ public class VideoModule implements CameraModule,
             }
             readVideoPreferences();
             resizeForPreviewAspectRatio();
-
-            CameraScreenNail screenNail = (CameraScreenNail) mActivity.mCameraScreenNail;
-            screenNail.cancelAcquire();
-            if (screenNail.getSurfaceTexture() == null) {
-                screenNail.acquireSurfaceTexture();
-            }
-            mStartPreviewThread = new StartPreviewThread();
-            mStartPreviewThread.start();
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    startPreview();
+                }
+            }).start();
         } else {
             // preview already started
             mUI.enableShutter(true);
@@ -951,10 +832,6 @@ public class VideoModule implements CameraModule,
         } else {
             // We need to consider display rotation ourselves.
             mCameraDisplayOrientation = Util.getDisplayOrientation(mDisplayRotation, mCameraId);
-        }
-        if (mFocusManager != null) {
-            int mDisplayOrientation = Util.getDisplayOrientation(mDisplayRotation, mCameraId);
-            mFocusManager.setDisplayOrientation(mDisplayOrientation);
         }
         // GLRoot also uses the DisplayRotation, and needs to be told to layout to update
         mActivity.getGLRoot().requestLayoutContentPane();
@@ -991,7 +868,6 @@ public class VideoModule implements CameraModule,
 
         try {
             if (!effectsActive()) {
-                mFocusManager.setAeAwbLock(false); // Unlock AE and AWB.
                 if (ApiHelper.HAS_SURFACE_TEXTURE) {
                     SurfaceTexture texture = mActivity.getScreenNailTextureForPreviewSize(
                             mCameraId, mCameraDisplayOrientation, mParameters);
@@ -1027,20 +903,17 @@ public class VideoModule implements CameraModule,
                 }
             });
         }
-        mFocusManager.onPreviewStarted();
 
     }
 
     private void onPreviewStarted() {
-        mHandler.sendEmptyMessage(ENABLE_SHUTTER_BUTTON);
-        mHandler.sendEmptyMessage(START_PREVIEW_DONE);
+        mUI.enableShutter(true);
     }
 
     @Override
     public void stopPreview() {
         mActivity.mCameraDevice.stopPreview();
         mPreviewing = false;
-        if (mFocusManager != null) mFocusManager.onPreviewStopped();
     }
 
     // Closing the effects out. Will shut down the effects graph.
@@ -1059,16 +932,6 @@ public class VideoModule implements CameraModule,
 
     // By default, we want to close the effects as well with the camera.
     private void closeCamera() {
-        CameraScreenNail screenNail = (CameraScreenNail) mActivity.mCameraScreenNail;
-        screenNail.cancelAcquire();
-        try {
-            if (mStartPreviewThread != null) {
-                mStartPreviewThread.interrupt();
-                mStartPreviewThread.join();
-                mStartPreviewThread = null;
-            }
-        } catch (InterruptedException e) {
-        }
         closeCamera(true);
     }
 
@@ -1107,7 +970,6 @@ public class VideoModule implements CameraModule,
         mActivity.mCameraDevice = null;
         mPreviewing = false;
         mSnapshotInProgress = false;
-        mFocusManager.onCameraReleased();
     }
 
     private void releasePreviewResources() {
@@ -1156,7 +1018,6 @@ public class VideoModule implements CameraModule,
             mReceiver = null;
         }
         resetScreenOn();
-        mUI.onPause();
 
         if (mLocationManager != null) mLocationManager.recordLocation(false);
 
@@ -1171,28 +1032,6 @@ public class VideoModule implements CameraModule,
 
     @Override
     public void onPauseAfterSuper() {
-        if (mFocusManager != null) mFocusManager.removeMessages();
-    }
-
-    /**
-     * The focus manager is the first UI related element to get initialized,
-     * and it requires the RenderOverlay, so initialize it here
-     */
-    private void initializeFocusManager() {
-        // Create FocusManager object. startPreview needs it.
-        // if mFocusManager not null, reuse it
-        // otherwise create a new instance
-        if (mFocusManager != null) {
-            mFocusManager.removeMessages();
-        } else {
-            CameraInfo info = CameraHolder.instance().getCameraInfo()[mCameraId];
-            boolean mirror = (info.facing == CameraInfo.CAMERA_FACING_FRONT);
-            String[] defaultFocusModes = mActivity.getResources().getStringArray(
-                    R.array.pref_camera_focusmode_default_array);
-            mFocusManager = new FocusOverlayManager(mPreferences, defaultFocusModes,
-                    mParameters, this, mirror,
-                    mActivity.getMainLooper(), mUI);
-        }
     }
 
     @Override
@@ -1248,6 +1087,11 @@ public class VideoModule implements CameraModule,
             case KeyEvent.KEYCODE_CAMERA:
                 mUI.pressShutter(false);
                 return true;
+            case KeyEvent.KEYCODE_POWER:
+                if (ActivityBase.mPowerShutter) {
+                    onShutterButtonClick();
+                }
+                return true;
         }
         return false;
     }
@@ -1282,7 +1126,6 @@ public class VideoModule implements CameraModule,
     }
 
     private void setupMediaRecorderPreviewDisplay() {
-        mFocusManager.resetTouchFocus();
         // Nothing to do here if using SurfaceTexture.
         if (!ApiHelper.HAS_SURFACE_TEXTURE) {
             mMediaRecorder.setPreviewDisplay(mUI.getSurfaceHolder().getSurface());
@@ -1579,7 +1422,7 @@ public class VideoModule implements CameraModule,
 
     private void saveVideo() {
         if (mVideoFileDescriptor == null) {
-            long duration = SystemClock.uptimeMillis() - mRecordingStartTime + mRecordingTotalTime;
+            long duration = SystemClock.uptimeMillis() - mRecordingStartTime;
             if (duration > 0) {
                 if (mCaptureTimeLapse) {
                     duration = getTimeLapseVideoLength(duration);
@@ -1621,9 +1464,9 @@ public class VideoModule implements CameraModule,
     @Override
     public void onError(MediaRecorder mr, int what, int extra) {
         Log.e(TAG, "MediaRecorder error. what=" + what + ". extra=" + extra);
-        stopVideoRecording();
         if (what == MediaRecorder.MEDIA_RECORDER_ERROR_UNKNOWN) {
             // We may have run out of space on the sdcard.
+            stopVideoRecording();
             mActivity.updateStorageSpaceAndHint();
         }
     }
@@ -1662,6 +1505,8 @@ public class VideoModule implements CameraModule,
 
     private void startVideoRecording() {
         Log.v(TAG, "startVideoRecording");
+        mUI.enablePreviewThumb(false);
+        mActivity.setSwipingEnabled(false);
 
         mActivity.updateStorageSpaceAndHint();
         if (mActivity.getStorageSpace() <= Storage.LOW_STORAGE_THRESHOLD) {
@@ -1707,9 +1552,6 @@ public class VideoModule implements CameraModule,
             }
         }
 
-        mUI.enablePreviewThumb(false);
-        mActivity.setSwipingEnabled(false);
-
         // Make sure the video recording has started before announcing
         // this in accessibility.
         AccessibilityUtils.makeAnnouncement(mActivity.getShutterButton(),
@@ -1729,12 +1571,9 @@ public class VideoModule implements CameraModule,
         mUI.enableCameraControls(false);
 
         mMediaRecorderRecording = true;
-        mMediaRecorderPausing = false;
-        mUI.resetPauseButton();
         if (!Util.systemRotationLocked(mActivity)) {
             mActivity.getOrientationManager().lockOrientation();
         }
-        mRecordingTotalTime = 0L;
         mRecordingStartTime = SystemClock.uptimeMillis();
         mUI.showRecordingUI(true, mParameters.isZoomSupported());
 
@@ -1774,21 +1613,6 @@ public class VideoModule implements CameraModule,
         if (mCaptureTimeLapse) {
             mUI.showTimeLapseUI(true);
         }
-    }
-
-    private void pauseVideoRecording() {
-        Log.v(TAG, "pauseVideoRecording");
-        mMediaRecorderPausing = true;
-        mRecordingTotalTime += SystemClock.uptimeMillis() - mRecordingStartTime;
-        mMediaRecorder.pause();
-    }
-
-    private void resumeVideoRecording() {
-        Log.v(TAG, "resumeVideoRecording");
-        mMediaRecorderPausing = false;
-        mRecordingStartTime = SystemClock.uptimeMillis();
-        updateRecordingTime();
-        mMediaRecorder.start();
     }
 
     private boolean stopVideoRecording() {
@@ -1862,10 +1686,8 @@ public class VideoModule implements CameraModule,
             if (!mPaused) {
                 mActivity.mCameraDevice.lock();
                 mActivity.mCameraDevice.waitDone();
-                if ((ApiHelper.HAS_SURFACE_TEXTURE &&
-                    !ApiHelper.HAS_SURFACE_TEXTURE_RECORDING) ||
-                    mActivity.getResources().getBoolean(
-                        R.bool.useVideoSnapshotWorkaround)) {
+                if (ApiHelper.HAS_SURFACE_TEXTURE &&
+                    !ApiHelper.HAS_SURFACE_TEXTURE_RECORDING) {
                     stopPreview();
                     // Switch back to use SurfaceTexture for preview.
                     ((CameraScreenNail) mActivity.mCameraScreenNail).setOneTimeOnFrameDrawnListener(
@@ -1880,7 +1702,7 @@ public class VideoModule implements CameraModule,
         UsageStatistics.onEvent(UsageStatistics.COMPONENT_CAMERA,
                 fail ? UsageStatistics.ACTION_CAPTURE_FAIL :
                     UsageStatistics.ACTION_CAPTURE_DONE, "Video",
-                    SystemClock.uptimeMillis() - mRecordingStartTime + mRecordingTotalTime);
+                    SystemClock.uptimeMillis() - mRecordingStartTime);
         return fail;
     }
 
@@ -1956,11 +1778,8 @@ public class VideoModule implements CameraModule,
         if (!mMediaRecorderRecording) {
             return;
         }
-        if (mMediaRecorderPausing) {
-            return;
-        }
         long now = SystemClock.uptimeMillis();
-        long delta = now - mRecordingStartTime + mRecordingTotalTime;
+        long delta = now - mRecordingStartTime;
 
         // Starting a minute before reaching the max duration
         // limit, we'll countdown the remaining time instead.
@@ -2017,12 +1836,6 @@ public class VideoModule implements CameraModule,
         CameraSettings.setEarlyVideoSize(mParameters, mProfile);
         // Set video mode
         CameraSettings.setVideoMode(mParameters, true);
-
-        // Reduce purple noise
-        CameraSettings.setReducePurple(mParameters, true);
-
-        // Clear any previously set scene mode values
-        CameraSettings.resetSceneMode(mParameters);
 
         // Set flash mode.
         String flashMode;
@@ -2082,57 +1895,26 @@ public class VideoModule implements CameraModule,
         // The logic here is different from the logic in still-mode camera.
         // There we determine the preview size based on the picture size, but
         // here we determine the picture size based on the preview size.
-        if (!mActivity.getResources().getBoolean(R.bool.useVideoSnapshotWorkaround)) {
-            List<Size> supported = mParameters.getSupportedPictureSizes();
-            Size optimalSize = Util.getOptimalVideoSnapshotPictureSize(supported,
-                    (double) mDesiredPreviewWidth / mDesiredPreviewHeight);
-            Size original = mParameters.getPictureSize();
-            if (!original.equals(optimalSize)) {
-                mParameters.setPictureSize(optimalSize.width, optimalSize.height);
-            }
-            Log.v(TAG, "Video snapshot size is " + optimalSize.width + "x" +
-                    optimalSize.height);
-        } else {
-            // At least one device will get bus overflows if we set this too high
-            mParameters.setPictureSize(mProfile.videoFrameWidth, mProfile.videoFrameHeight);
+        List<Size> supported = mParameters.getSupportedPictureSizes();
+        Size optimalSize = Util.getOptimalVideoSnapshotPictureSize(supported,
+                (double) mDesiredPreviewWidth / mDesiredPreviewHeight);
+        Size original = mParameters.getPictureSize();
+        if (!original.equals(optimalSize)) {
+            mParameters.setPictureSize(optimalSize.width, optimalSize.height);
         }
+        Log.v(TAG, "Video snapshot size is " + optimalSize.width + "x" +
+                optimalSize.height);
 
         // Set JPEG quality.
         int jpegQuality = CameraProfile.getJpegEncodingQualityParameter(mCameraId,
                 CameraProfile.QUALITY_HIGH);
         mParameters.setJpegQuality(jpegQuality);
 
-        // Enable HFR mode for WVGA
-        List<String> hfrModes = mParameters.getSupportedVideoHighFrameRateModes();
-        if (hfrModes != null) {
-            mParameters.setVideoHighFrameRate(mEnableHFR ? hfrModes.get(hfrModes.size() - 1) : "off");
-        }
-
-        // Set Video HDR.
-        if (mActivity.getResources().getBoolean(R.bool.enableVideoHDR)) {
-            String videoHDR = mPreferences.getString(
-                    CameraSettings.KEY_VIDEO_HDR,
-                    mActivity.getString(R.string.pref_camera_video_hdr_default));
-            Log.v(TAG, "Video HDR Setting =" + videoHDR);
-            if (isSupported(videoHDR, mParameters.getSupportedVideoHDRModes())) {
-                mParameters.setVideoHDRMode(videoHDR);
-            } else {
-                mParameters.setVideoHDRMode("off");
-            }
-        }
-
-        Util.dumpParameters(mParameters);
-
         mActivity.mCameraDevice.setParameters(mParameters);
         // Keep preview size up to date.
         mParameters = mActivity.mCameraDevice.getParameters();
 
         updateCameraScreenNailSize(mDesiredPreviewWidth, mDesiredPreviewHeight);
-
-        CameraScreenNail screenNail = (CameraScreenNail) mActivity.mCameraScreenNail;
-        int width = screenNail.getWidth();
-        int height = screenNail.getHeight();
-        mFocusManager.setPreviewSize(width, height);
     }
 
     private void updateCameraScreenNailSize(int width, int height) {
@@ -2145,8 +1927,8 @@ public class VideoModule implements CameraModule,
         }
 
         CameraScreenNail screenNail = (CameraScreenNail) mActivity.mCameraScreenNail;
-        int oldWidth = screenNail.getTextureWidth();
-        int oldHeight = screenNail.getTextureHeight();
+        int oldWidth = screenNail.getWidth();
+        int oldHeight = screenNail.getHeight();
 
         if (oldWidth != width || oldHeight != height) {
             screenNail.setSize(width, height);
@@ -2154,11 +1936,9 @@ public class VideoModule implements CameraModule,
             mActivity.notifyScreenNailChanged();
         }
 
-        if (mStartPreviewThread == null && screenNail.getSurfaceTexture() == null) {
+        if (screenNail.getSurfaceTexture() == null) {
             screenNail.acquireSurfaceTexture();
         }
-
-        mFocusManager.setPreviewSize(width, height);
     }
 
     @Override
@@ -2247,7 +2027,6 @@ public class VideoModule implements CameraModule,
     public void onConfigurationChanged(Configuration newConfig) {
         Log.v(TAG, "onConfigurationChanged");
         setDisplayOrientation();
-        resizeForPreviewAspectRatio();
     }
 
     @Override
@@ -2304,6 +2083,7 @@ public class VideoModule implements CameraModule,
                 setCameraParameters();
             }
             mUI.updateOnScreenIndicators(mParameters, mPreferences);
+            mActivity.initPowerShutter(mPreferences);
         }
     }
 
@@ -2322,7 +2102,6 @@ public class VideoModule implements CameraModule,
 
         closeCamera();
         mUI.collapseCameraControls();
-        if (mFocusManager != null) mFocusManager.removeMessages();
         // Restart the camera and initialize the UI. From onCreate.
         mPreferences.setLocalId(mActivity, mCameraId);
         CameraSettings.upgradeLocalPreferences(mPreferences.getLocal());
@@ -2332,15 +2111,6 @@ public class VideoModule implements CameraModule,
         initializeVideoSnapshot();
         resizeForPreviewAspectRatio();
         initializeVideoControl();
-
-        CameraInfo info = CameraHolder.instance().getCameraInfo()[mCameraId];
-        boolean mirror = (info.facing == CameraInfo.CAMERA_FACING_FRONT);
-        mParameters = mActivity.mCameraDevice.getParameters();
-        mFocusManager.setMirror(mirror);
-        mFocusManager.setParameters(mParameters);
-
-        mFocusAreaSupported = Util.isFocusAreaSupported(mParameters);
-        mMeteringAreaSupported = Util.isMeteringAreaSupported(mParameters);
 
         // From onResume
         mUI.initializeZoom(mParameters);
@@ -2456,6 +2226,9 @@ public class VideoModule implements CameraModule,
     public void updateCameraAppView() {
         if (!mPreviewing || mParameters.getFlashMode() == null) return;
 
+        // Setup Power shutter
+        mActivity.initPowerShutter(mPreferences);
+
         // When going to and back from gallery, we need to turn off/on the flash.
         if (!mActivity.mShowCameraAppView) {
             if (mParameters.getFlashMode().equals(Parameters.FLASH_MODE_OFF)) {
@@ -2498,7 +2271,6 @@ public class VideoModule implements CameraModule,
     }
 
     private void storeImage(final byte[] data, Location loc) {
-        mParameters = mActivity.mCameraDevice.getParameters();
         long dateTaken = System.currentTimeMillis();
         String title = Util.createJpegName(dateTaken);
         ExifInterface exif = Exif.getExif(data);
@@ -2572,17 +2344,11 @@ public class VideoModule implements CameraModule,
             // We need to keep a preview frame for the animation before
             // releasing the camera. This will trigger onPreviewTextureCopied.
             ((CameraScreenNail) mActivity.mCameraScreenNail).copyTexture();
+            // Disable all camera controls.
+            mSwitchingCamera = true;
         } else {
             switchCamera();
         }
-    }
-
-    @Override
-    public void onCameraPickerSuperClicked() {
-        if (mPaused || mPendingSwitchCameraId != -1) return;
-
-        // Disable all camera controls.
-        mSwitchingCamera = true;
     }
 
     @Override
@@ -2603,15 +2369,5 @@ public class VideoModule implements CameraModule,
     @Override
     public void onMediaSaveServiceConnected(MediaSaveService s) {
         // do nothing.
-    }
-
-    @Override
-    public void onButtonPause() {
-        pauseVideoRecording();
-    }
-
-    @Override
-    public void onButtonContinue() {
-        resumeVideoRecording();
     }
 }

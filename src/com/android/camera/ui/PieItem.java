@@ -41,7 +41,6 @@ public class PieItem {
     private List<PieItem> mItems;
     private Path mPath;
     private OnClickListener mOnClickListener;
-    private OnClickListener mOnSuperClickListener;
     private float mAlpha;
     private CharSequence mLabel;
 
@@ -139,19 +138,9 @@ public class PieItem {
         mOnClickListener = listener;
     }
 
-    public void setOnSuperClickListener(OnClickListener listener) {
-        mOnSuperClickListener = listener;
-    }
-
     public void performClick() {
         if (mOnClickListener != null) {
             mOnClickListener.onClick(this);
-        }
-    }
-
-    public void performSuperClick() {
-        if (mOnSuperClickListener != null) {
-            mOnSuperClickListener.onClick(this);
         }
     }
 

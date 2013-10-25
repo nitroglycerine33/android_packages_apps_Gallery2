@@ -153,16 +153,16 @@ public class PanoramaModule implements CameraModule,
     private float mHorizontalViewAngle;
     private float mVerticalViewAngle;
 
-    private String mTargetFocusMode;
+    // Prefer FOCUS_MODE_INFINITY to FOCUS_MODE_CONTINUOUS_VIDEO because of
+    // getting a better image quality by the former.
+    private String mTargetFocusMode = Parameters.FOCUS_MODE_INFINITY;
 
     private PanoOrientationEventListener mOrientationEventListener;
-
     // The value could be 0, 90, 180, 270 for the 4 different orientations measured in clockwise
     // respectively.
     private int mDeviceOrientation;
     private int mDeviceOrientationAtCapture;
     private int mCameraOrientation;
-    private int mPanoAngle;
     private int mOrientationCompensation;
 
     private RotateDialogController mRotateDialog;
@@ -363,11 +363,6 @@ public class PanoramaModule implements CameraModule,
         mCameraDevice = Util.openCamera(mActivity, cameraId);
         mCameraOrientation = Util.getCameraOrientation(cameraId);
         if (cameraId == CameraHolder.instance().getFrontCameraId()) mUsingFrontCamera = true;
-        if (mActivity.getResources().getBoolean(R.bool.useInfinityFocus)) {
-            mTargetFocusMode = Parameters.FOCUS_MODE_INFINITY;
-        } else {
-            mTargetFocusMode = Parameters.FOCUS_MODE_CONTINUOUS_VIDEO;
-        }
     }
 
     private boolean findBestPreviewSize(List<Size> supportedSizes, boolean need4To3,
@@ -657,9 +652,7 @@ public class PanoramaModule implements CameraModule,
                 (Math.abs(mProgressAngle[0]) > Math.abs(mProgressAngle[1]))
                 ? (int) mProgressAngle[0]
                 : (int) mProgressAngle[1];
-        //need to flip the direction if mPanoAngle is larger than 180
-        mPanoProgressBar.setProgress(mPanoAngle >= 180 ?
-            (0 - angleInMajorDirection) : angleInMajorDirection);
+        mPanoProgressBar.setProgress((angleInMajorDirection));
     }
 
     private void setViews(Resources appRes) {
@@ -794,9 +787,9 @@ public class PanoramaModule implements CameraModule,
         if (mUsingFrontCamera) {
             // mCameraOrientation is negative with respect to the front facing camera.
             // See document of android.hardware.Camera.Parameters.setRotation.
-            orientation = (mDeviceOrientationAtCapture - mCameraOrientation - mPanoAngle + 360) % 360;
+            orientation = (mDeviceOrientationAtCapture - mCameraOrientation + 360) % 360;
         } else {
-            orientation = (mDeviceOrientationAtCapture + mCameraOrientation - mPanoAngle) % 360;
+            orientation = (mDeviceOrientationAtCapture + mCameraOrientation) % 360;
         }
         return orientation;
     }
@@ -921,11 +914,12 @@ public class PanoramaModule implements CameraModule,
             ExifInterface exif = new ExifInterface();
             try {
                 exif.readExif(jpegData);
+                exif.addGpsDateTimeStampTag(mTimeTaken);
                 exif.addDateTimeStampTag(ExifInterface.TAG_DATE_TIME, mTimeTaken,
                         TimeZone.getDefault());
                 exif.setTag(exif.buildTag(ExifInterface.TAG_ORIENTATION,
                         ExifInterface.getOrientationValueForRotation(orientation)));
-                writeLocation(loc, mTimeTaken, exif);
+                writeLocation(loc, exif);
                 exif.writeExif(jpegData, filepath);
             } catch (IOException e) {
                 Log.e(TAG, "Cannot set exif for " + filepath, e);
@@ -938,12 +932,11 @@ public class PanoramaModule implements CameraModule,
         return null;
     }
 
-    private static void writeLocation(Location location, long timestamp, ExifInterface exif) {
+    private static void writeLocation(Location location, ExifInterface exif) {
         if (location == null) {
             return;
         }
         exif.addGpsTags(location.getLatitude(), location.getLongitude());
-        exif.addGpsDateTimeStampTag(timestamp);
         exif.setTag(exif.buildTag(ExifInterface.TAG_GPS_PROCESSING_METHOD, location.getProvider()));
     }
 
@@ -1165,14 +1158,9 @@ public class PanoramaModule implements CameraModule,
             // Set the display orientation to 0, so that the underlying mosaic
             // library can always get undistorted mPreviewWidth x mPreviewHeight
             // image data from SurfaceTexture.
+            mCameraDevice.setDisplayOrientation(0);
 
-            // as Panoroma will add 90 degree rotation compensation during
-            // postprocessing, we need to consider both camera mount angle and
-            // this compensation angle
-            mPanoAngle = (mCameraOrientation - 90 + 360) % 360;
-            mCameraDevice.setDisplayOrientation(mPanoAngle);
-
-            if (mCameraTexture != null) mCameraTexture.setOnFrameAvailableListener(this);
+            mCameraTexture.setOnFrameAvailableListener(this);
             mCameraDevice.setPreviewTextureAsync(mCameraTexture);
         }
         mCameraDevice.startPreviewAsync();

@@ -82,7 +82,7 @@ public class MoreSettingPopup extends AbstractSettingPopup
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            if (convertView != null  && (position == (Integer) convertView.getTag())) return convertView;
+            if (convertView != null) return convertView;
 
             ListPreference pref = mListItem.get(position);
 
@@ -90,7 +90,6 @@ public class MoreSettingPopup extends AbstractSettingPopup
             InLineSettingItem view = (InLineSettingItem)
                     mInflater.inflate(viewLayoutId, parent, false);
 
-            view.setTag(position);
             view.initialize(pref); // no init for restore one
             view.setSettingChangedListener(MoreSettingPopup.this);
             if (position >= 0 && position < mEnabled.length) {

@@ -19,9 +19,8 @@ package com.android.camera;
 import android.view.View;
 
 import com.android.camera.ShutterButton.OnShutterButtonListener;
-import com.android.camera.PauseButton.OnPauseButtonListener;
 
-public interface VideoController extends OnShutterButtonListener, OnPauseButtonListener {
+public interface VideoController extends OnShutterButtonListener {
 
     public void onReviewDoneClicked(View view);
     public void onReviewCancelClicked(View viwe);
@@ -34,6 +33,4 @@ public interface VideoController extends OnShutterButtonListener, OnPauseButtonL
     public void onSingleTapUp(View view, int x, int y);
 
     public void stopPreview();
-
-    public void onScreenSizeChanged(int width, int height, int previewWidth, int previewHeight);
 }
